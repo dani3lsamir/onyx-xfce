@@ -2,7 +2,8 @@
 
 Una barra superior **negra, monocromática y funcional** para XFCE, construida
 solo con el panel de XFCE y sus plugins nativos (`genmon`, `pager`, `systray`,
-`pulseaudio`, `xkb`, `actions`). Sin i3, Polybar, Rofi ni compositores.
+`pulseaudio`, `xkb`, `launcher`), con el mismo diseño hasta en el menú de sesión
+y la pantalla de bloqueo. Sin i3, Polybar, Rofi ni compositores.
 
 Pensada para un portátil antiguo (Linux Mint 22.3 XFCE, AMD A10-9600P,
 6 GB de RAM, HDD, pantalla de 1366 × 768): refrescos espaciados, ningún sondeo
@@ -14,7 +15,9 @@ No se copió su configuración: todo se escribió desde cero para XFCE.
 
 ![Barra Onyx a 1366 px](docs/bar.png)
 
-![Ventanas emergentes: calendario, Wi-Fi, Bluetooth y brillo](docs/popups.png)
+![Ventanas emergentes: calendario, Wi-Fi, Bluetooth, brillo y sesión](docs/popups.png)
+
+![Pantalla de bloqueo Onyx](docs/lock.png)
 
 > Las capturas se generaron en un entorno de prueba (Xvfb a 1366 × 768, XFCE
 > 4.18.4). Los sensores, NetworkManager, BlueZ, el reproductor y el clima eran
@@ -30,7 +33,7 @@ No se copió su configuración: todo se escribió desde cero para XFCE.
 | Izq. | Brave Origin (único lanzador) | su archivo `.desktop` | — | abre el navegador |
 | Izq. | Bandeja (Dropbox, Nextcloud…) | Status Tray nativo | instantáneo | menú de cada app |
 | Izq. | Música: `♫ Título ❚❚` | MPRIS vía `playerctl --follow` | por eventos | play / pausa |
-| Centro | Reloj `Oct 26 · 4:27 P` | builtins de Bash | 10 s | calendario |
+| Centro | Reloj `Oct 26 · 4:27 PM` | builtins de Bash | 10 s | calendario |
 | Der. | CPU `12%` | `/proc/stat` | 12 s | — |
 | Der. | RAM `41%` | `/proc/meminfo` (MemAvailable) | 12 s | — |
 | Der. | Temperatura `58°C` | hwmon: `k10temp` › `acpitz` › `amdgpu` | 12 s | — |
@@ -40,7 +43,7 @@ No se copió su configuración: todo se escribió desde cero para XFCE.
 | Der. | Volumen | plugin PulseAudio nativo (PipeWire en Mint 22) | instantáneo | control deslizante, rueda |
 | Der. | Brillo `60%` | `/sys/class/backlight` ; logind `SetBrightness` | 15 s | control deslizante |
 | Der. | Teclado `US` / `ES` | plugin xkb nativo | instantáneo | cambia de distribución |
-| Der. | Apagado | plugin Action Buttons nativo | — | apagar · reiniciar · cerrar sesión |
+| Der. | Sesión ⏻ | lanzador nativo + ventana Onyx | — | bloquear · cerrar sesión · reiniciar · apagar |
 
 No hay batería, cargador ni información de energía de la batería en ningún
 módulo; el instalador además oculta el icono de bandeja de xfce4-power-manager.
@@ -63,11 +66,28 @@ solapan unos píxeles y se ven como una sola franja continua:
 
 ```
 panel 1 (arriba-izq., 43 %)   panel 2 (arriba-centro, 15 %)   panel 3 (arriba-der., 43 %)
-[- -- ---] [Brave] [bandeja] [música]    [ Oct 26 · 4:27 P ]    [CPU RAM TEMP CLIMA BT WIFI VOL BRILLO US ⏻]
+[- -- ---] [Brave] [bandeja] [música]   [ Oct 26 · 4:27 PM ]   [CPU RAM TEMP CLIMA BT WIFI VOL BRILLO US ⏻]
 ```
 
 El panel central está anclado al centro de la pantalla, así que el reloj
 queda centrado al píxel pase lo que pase a los lados.
+
+### Menú de sesión y pantalla de bloqueo
+
+- **Botón ⏻**: abre una ventana Onyx con *Bloquear*, *Cerrar sesión*,
+  *Reiniciar* y *Apagar*. Las tres últimas piden confirmación en la misma
+  ventana («¿Apagar el equipo?» · Cancelar / Apagar) y el foco queda en
+  *Cancelar*, así que Enter nunca apaga por accidente. Se ejecutan con
+  `xfce4-session-logout` (o `systemctl` / `loginctl` si no existe).
+- **Bloqueo y desbloqueo**: Mint XFCE bloquea con *light-locker*, que muestra
+  la pantalla de inicio de LightDM; cambiarla exige root y afecta también al
+  login. Onyx usa en su lugar **xfce4-screensaver**, el bloqueador propio de
+  XFCE, cuyo diálogo de desbloqueo es una ventana GTK de tu sesión: fondo negro
+  plano, la barra superior Onyx, avatar redondo, campo de contraseña gris y
+  botón *Desbloquear* blanco, con los mensajes de error en gris. Para tu
+  usuario se desactiva el autoarranque de light-locker (sin tocar archivos del
+  sistema) y se configura: solo pantalla en negro (sin animaciones), bloqueo
+  al activarse y al suspender. `restore.sh` vuelve a light-locker.
 
 ## Requisitos
 
@@ -82,6 +102,7 @@ queda centrado al píxel pase lo que pase a los lados.
   | `playerctl` | música (MPRIS) |
   | `curl` | descarga del clima |
   | `python3-gi`, `gir1.2-gtk-3.0` | ventanas emergentes (ya vienen en Mint) |
+  | `xfce4-screensaver` | bloqueo de pantalla con diseño Onyx |
   | `fonts-dejavu-core` | fuente DejaVu Sans Mono (ya viene en Mint) |
   | `rfkill`, `util-linux`, `x11-utils`, `dbus-bin`, `xfconf` | utilidades base |
 
@@ -114,8 +135,9 @@ El instalador:
    ejecución se llama `original` y nunca se sobrescribe; las siguientes crean
    respaldos con fecha. Se guardan: la configuración del panel
    (`xfce4-panel.xml` + `~/.config/xfce4/panel/`), `gtk.css`, `.bashrc` y los
-   valores previos de escritorios, distribución de teclado e icono de energía.
-5. Copia los archivos y reconstruye el panel.
+   valores previos de escritorios, distribución de teclado, icono de energía y
+   bloqueo de pantalla (qué bloqueador había y sus ajustes).
+5. Copia los archivos, reconstruye el panel y cambia el bloqueador.
 
 Es seguro ejecutarlo varias veces. No borra programas, no toca Firefox ni Brave
 Origin y conserva tu `onyx.conf` si ya existe. En `gtk.css` y `.bashrc` solo
@@ -129,9 +151,11 @@ añade un bloque marcado `>>> onyx-xfce >>>`, el resto queda intacto.
 ./restore.sh --from 20261026-222125
 ```
 
-Restaura el panel tal como estaba, los escritorios, la distribución de teclado y
-el icono de energía; quita los bloques de `gtk.css` y `.bashrc`, y elimina los
-archivos instalados. Los respaldos y tu `onyx.conf` se conservan.
+Restaura el panel tal como estaba, los escritorios, la distribución de teclado,
+el icono de energía y el bloqueador anterior (light-locker vuelve a arrancar;
+xfce4-screensaver queda instalado pero desactivado si no estaba antes); quita
+los bloques de `gtk.css` y `.bashrc`, y elimina los archivos instalados. Los
+respaldos y tu `onyx.conf` se conservan.
 
 ## Estructura
 
@@ -140,7 +164,7 @@ install.sh, restore.sh       instalador y restaurador
 lib/common.sh                utilidades compartidas (respaldo, bloques marcados, xfconf)
 lib/panel-layout.sh          definición completa de la barra (paneles y plugins)
 bin/onyx-common.sh           funciones comunes de los módulos
-bin/onyx-clock               reloj "Oct 26 · 4:27 P"
+bin/onyx-clock               reloj "Oct 26 · 4:27 PM"
 bin/onyx-cpu, onyx-ram       uso de CPU y RAM
 bin/onyx-temp                temperatura interna (hwmon)
 bin/onyx-weather             clima con caché y descarga en segundo plano
@@ -148,9 +172,9 @@ bin/onyx-music               módulo de música + escucha de eventos MPRIS
 bin/onyx-bluetooth           estado Bluetooth
 bin/onyx-network             estado Wi-Fi / cable
 bin/onyx-brightness          brillo
-bin/onyx-popup               ventanas: calendario, Wi-Fi, Bluetooth, brillo (Python + GTK 3)
+bin/onyx-popup               ventanas: calendario, Wi-Fi, Bluetooth, brillo, sesión (Python + GTK 3)
 config/onyx.conf             ajustes del usuario (ubicación del clima, sensor, umbrales…)
-config/gtk-3.0/onyx-panel.css estilo de la barra (solo afecta al panel)
+config/gtk-3.0/onyx-panel.css estilo de la barra y de la pantalla de bloqueo
 config/bash/prompt.bash      prompt de Bash
 config/terminal/onyx.theme   esquema de color opcional para xfce4-terminal
 icons/Onyx/                  iconos SVG monocromos (solo se usan dentro del panel)
@@ -192,7 +216,8 @@ Destino de la instalación: `~/.local/share/onyx-xfce/bin/`,
   coordenadas y nombre del lugar del clima, duración de la caché, sensor de
   temperatura (`auto`, `k10temp`, `acpitz`, `amdgpu` o una ruta), umbrales de
   aviso (70 °C resaltado, 80 °C invertido), dispositivo de brillo, longitud del
-  título de la música, reproductores ignorados, idioma del mes del reloj.
+  título de la música, reproductores ignorados, idioma del mes del reloj y
+  `ONYX_CLOCK_AMPM` (`full` = `4:27 PM`, `short` = `4:27 P`).
 - **Colores, márgenes, fuente**: variables `@define-color` al inicio de
   `~/.config/gtk-3.0/onyx-panel.css`. Tras editarlo: `xfce4-panel -r`.
 - **Frecuencia de un módulo**: clic derecho › Propiedades en el módulo, o
@@ -209,6 +234,10 @@ Destino de la instalación: `~/.local/share/onyx-xfce/bin/`,
   `ONYX_PROMPT_GIT_DIRTY=1` muestra `*` si hay cambios sin confirmar (eso sí
   ejecuta `git`; por defecto la rama se lee sin procesos extra).
 - **Terminal**: Preferencias de xfce4-terminal › Colores › Esquema `Onyx`.
+- **Pantalla de bloqueo**: sección `lock screen` de `onyx-panel.css`. Para ver
+  tu fondo de escritorio detrás del diálogo, borra la línea
+  `-gtk-icon-transform: scale(0)`. Tiempo de espera y demás: Configuración ›
+  Salvapantallas (xfce4-screensaver).
 
 ## Terminal
 
@@ -233,7 +262,8 @@ reposo durante 3 minutos:
 - **Memoria**: ≈ 106 MiB PSS para panel + 14 plugins. La mayor parte son los
   procesos `wrapper-2.0` que XFCE crea por cada plugin externo (≈ 5–7 MiB cada
   uno). Residentes propios de Onyx: solo `onyx-music watch` (≈ 3 MiB) y
-  `playerctl` (≈ 6 MiB).
+  `playerctl` (≈ 6 MiB). xfce4-screensaver (≈ 5,5 MiB) sustituye a
+  light-locker, y el botón de sesión ya no usa un proceso de plugin aparte.
 - **Disco**: ninguna escritura periódica.
 - **Red**: una petición HTTPS al clima cada 45 min.
 
@@ -250,7 +280,7 @@ bajo Xvfb a 1366 × 768 con xfwm4:
       procesos de Onyx.
 - [x] Tres botones `- -- ---` siempre visibles; clic en cada uno cambia de
       escritorio (comprobado con `_NET_CURRENT_DESKTOP`).
-- [x] Reloj `Oct 26 · 10:22 P` centrado: el panel central ocupa
+- [x] Reloj `Oct 26 · 11:06 PM` centrado: el panel central ocupa
       581–785 px, centrado en 683 px; clic abre y cierra el calendario.
 - [x] Música con un reproductor MPRIS simulado: aparece, clic alterna
       reproducir/pausa (varias veces seguidas), `❚❚`/`▶` cambia, y desaparece
@@ -264,7 +294,16 @@ bajo Xvfb a 1366 × 768 con xfwm4:
       desconexión. Bluetooth contra un BlueZ simulado: encender/apagar,
       conectar dispositivo. Brillo: llamada `SetBrightness` a logind simulado.
 - [x] Teclado: clic cambia `US` → `ES` (`setxkbmap` muestra `us,es`).
-- [x] Menú de apagado con Apagar, Reiniciar y Cerrar sesión.
+- [x] Menú de sesión: *Bloquear* activa la pantalla de bloqueo; *Apagar*,
+      *Reiniciar* y *Cerrar sesión* piden confirmación, Enter cancela, y al
+      confirmar llaman a `xfce4-session-logout --halt / --reboot / --logout`
+      (comprobado con un sustituto que registra la llamada).
+- [x] Pantalla de bloqueo de xfce4-screensaver 4.18.3 con el diseño Onyx,
+      también con el mensaje de contraseña incorrecta.
+- [x] Cambio de bloqueador: con light-locker activo (simulado), el instalador
+      instala xfce4-screensaver con apt, lo arranca y desactiva light-locker
+      para el usuario; `restore.sh` vuelve a arrancar light-locker y deja
+      xfce4-screensaver desactivado.
 - [x] Bandeja con dos iconos XEmbed (Dropbox/Nextcloud simulados) alineados;
       nm-applet oculto.
 - [x] Al salir el panel no quedan procesos de plugin colgados (≈ 2 s) y tras
@@ -285,6 +324,9 @@ prueba) — revisa estos puntos en tu equipo:
   se probó con una respuesta real de ejemplo).
 - El nombre exacto del `.desktop` de Brave Origin (se busca `brave-origin*`).
 - El aspecto con el tema GTK de Mint (Mint-Y); se probó con Adwaita.
+- light-locker real (aquí no puede arrancar sin LightDM) y que Mint 22.3 lo use
+  de verdad: el instalador detecta cuál hay y lo muestra antes de aplicar.
+- Desbloquear con tu contraseña real y el bloqueo al suspender.
 - Iconos reales de Dropbox/Nextcloud y su menú.
 
 ## Limitaciones conocidas
@@ -299,7 +341,14 @@ prueba) — revisa estos puntos en tu equipo:
   el siguiente refresco (≤ 15 s).
 - **Volumen**: el porcentaje aparece en el tooltip y en la ventana del plugin,
   no en la barra (el plugin nativo no tiene etiqueta de texto).
-- **Menú de apagado** y ventana de volumen siguen el tema GTK del sistema.
+- **Ventana del volumen** (plugin nativo) sigue el tema GTK del sistema.
+- **Reloj de la pantalla de bloqueo**: xfce4-screensaver lo escribe siempre en
+  24 h (`%A, %B %e %H:%M`) y no se puede configurar, así que se oculta para no
+  contradecir el `AM/PM` de la barra.
+- **Pantalla de login al encender** (LightDM) no se modifica: cambiarla
+  requiere root y archivos del sistema.
+- **Avatar** del bloqueo: es el de tu cuenta (`~/.face` o AccountsService);
+  si no tienes, se ve el icono genérico del tema.
 - **Iconos de la bandeja**: son los de cada aplicación; solo se vuelven
   monocromos si la aplicación ofrece una variante simbólica.
 - Las ventanas emergentes necesitan ~0,3–0,5 s en abrir la primera vez desde un

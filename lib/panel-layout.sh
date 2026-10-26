@@ -90,6 +90,7 @@ _launcher_copy() {
 onyx_write_panel() {
     ONYX_BIN_DIR=$1
     local browser=$2
+    ONYX_ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/Onyx/scalable/status"
     ONYX_PANEL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/xfce4/panel"
     export LC_ALL=C # xfconf-query parses doubles with the C locale
 
@@ -168,11 +169,19 @@ onyx_write_panel() {
     _xq /plugins/plugin-17/caps-lock-indicator bool false
     _xq /plugins/plugin-17/display-tooltip-icon bool false
 
-    _xq /plugins/plugin-18 string actions
-    _xq /plugins/plugin-18/appearance uint 1     # menu
-    _xq /plugins/plugin-18/button-title uint 3   # custom (empty; icon via CSS)
-    _xq /plugins/plugin-18/custom-title string ""
-    _xq /plugins/plugin-18/ask-confirmation bool true
-    _xq_strings /plugins/plugin-18/items +shutdown +restart +separator +logout-dialog \
-        -lock-screen -switch-user -suspend -hibernate -hybrid-sleep -logout
+    # 18 — session button: Onyx popup with lock, log out, restart, shut down
+    _xq /plugins/plugin-18 string launcher
+    mkdir -p "$ONYX_PANEL_DIR/launcher-18"
+    cat >"$ONYX_PANEL_DIR/launcher-18/onyx-session.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Sesión
+Comment=Bloquear, cerrar sesión, reiniciar o apagar
+Exec=$ONYX_BIN_DIR/onyx-popup power
+Icon=$ONYX_ICON_DIR/onyx-power-symbolic.svg
+StartupNotify=false
+Terminal=false
+EOF
+    _xq_strings /plugins/plugin-18/items onyx-session.desktop
+    _xq /plugins/plugin-18/show-label bool false
 }

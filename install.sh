@@ -80,6 +80,10 @@ need_cmd dbus-send dbus-bin
 need_cmd flock util-linux
 need_cmd xprop x11-utils
 need_cmd rfkill rfkill
+# detected before apt runs, so restore.sh knows what was there originally
+ss_preinstalled=0
+command -v xfce4-screensaver >/dev/null && ss_preinstalled=1
+need_cmd xfce4-screensaver xfce4-screensaver
 need_plugin libgenmon.so xfce4-genmon-plugin
 need_plugin libpulseaudio-plugin.so xfce4-pulseaudio-plugin
 need_plugin libxkb.so xfce4-xkb-plugin
@@ -149,6 +153,14 @@ wifi="no"
 compgen -G "/sys/class/net/*/wireless" >/dev/null && wifi="sí"
 info "Wi-Fi:       $wifi"
 note "La batería no se muestra en ningún módulo."
+locker_prev=none
+if [[ -f /etc/xdg/autostart/light-locker.desktop || -f $AUTOSTART/light-locker.desktop ]] &&
+    ! grep -qs '^Hidden=true' "$AUTOSTART/light-locker.desktop"; then
+    locker_prev=light-locker
+elif ((ss_preinstalled)); then
+    locker_prev=xfce4-screensaver
+fi
+info "Bloqueo:     $locker_prev"
 
 # --------------------------------------------------------------------------
 step "Cambios que se aplicarán"
@@ -158,6 +170,8 @@ cat <<EOF
     Escritorios     3 escritorios llamados "-", "--", "---"
     Teclado         distribuciones us,es (cambio con clic en el indicador)
     Energía         se oculta el icono de bandeja de xfce4-power-manager
+    Bloqueo         xfce4-screensaver con diseño Onyx (solo pantalla en negro,
+                    bloquea al suspender); light-locker se desactiva para tu usuario
     Archivos nuevos $ONYX_DATA/bin/  (scripts de los módulos)
                     $ONYX_ICONS/  (iconos, solo dentro del panel)
                     $GTK_DIR/onyx-panel.css
@@ -209,6 +223,11 @@ for entry in "${ONYX_XFCONF_PROPS[@]}"; do
     read -r ch prop type arr <<<"$entry"
     printf '%s\t%s\t%s\t%s\n' "$ch" "$prop" "$arr" "$(xfconf_dump "$ch" "$prop" "$type" "$arr")" >>"$backup/xfconf.tsv"
 done
+mkdir -p "$backup/autostart"
+for f in light-locker xfce4-screensaver; do
+    [[ -f $AUTOSTART/$f.desktop ]] && cp -p "$AUTOSTART/$f.desktop" "$backup/autostart/"
+done
+printf 'LOCKER_PREV=%s\nSS_PREINSTALLED=%s\n' "$locker_prev" "$ss_preinstalled" >"$backup/locker.env"
 printf 'onyx-xfce %s\ncreated %s\nfrom %s\n' "$ONYX_VERSION" "$(date -Is)" "$ROOT" >"$backup/MANIFEST"
 info "Guardado en $backup"
 
@@ -253,6 +272,21 @@ xfconf-query -c keyboard-layout -p /Default/XkbVariant -n -t string -s ","
 info "Teclado: $layouts"
 xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/show-tray-icon -n -t bool -s false
 info "Bandeja: sin icono de batería"
+
+# Screen lock: xfce4-screensaver draws its unlock dialog with GTK inside the
+# session, so onyx-panel.css styles it. Blank screen only (no animations).
+xfconf-query -c xfce4-screensaver -p /saver/mode -n -t int -s 0
+xfconf-query -c xfce4-screensaver -p /lock/enabled -n -t bool -s true
+xfconf-query -c xfce4-screensaver -p /lock/sleep-activation -n -t bool -s true
+xfconf-query -c xfce4-session -p /general/LockCommand -n -t string -s "xfce4-screensaver-command --lock"
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/lock-screen-suspend-hibernate -n -t bool -s true
+if [[ -f /etc/xdg/autostart/light-locker.desktop || -f $AUTOSTART/light-locker.desktop ]]; then
+    autostart_hide light-locker
+fi
+grep -qs '^Hidden=true' "$AUTOSTART/xfce4-screensaver.desktop" && rm -f "$AUTOSTART/xfce4-screensaver.desktop"
+pkill -u "$(id -u)" -x light-locker 2>/dev/null || true
+locker_running xfce4-screensaver || setsid -f xfce4-screensaver >/dev/null 2>&1 </dev/null
+info "Bloqueo: xfce4-screensaver (light-locker desactivado para tu usuario)"
 
 panel_stop
 stop_watchers # after the panel: a last refresh could restart the listener

@@ -147,13 +147,12 @@
 /* ---- native plugins on the right: same pill as genmon ------------------- */
 #pulseaudio-15 button,
 #xkb-17 button,
-#actions-18 #actions-button {
+#launcher-18 button {
     margin: 4px 3px;
     padding: 0 8px;
     background-color: @onyx_module;
 }
-#pulseaudio-15 button:hover image,
-#actions-18 #actions-button:hover {
+#pulseaudio-15 button:hover image {
     color: @onyx_active;
 }
 #xkb-17 button {
@@ -162,12 +161,139 @@
 #xkb-17 label {
     font-weight: bold;
 }
-/* power button: icon drawn by CSS, the plugin label is empty */
-#actions-18 #actions-button {
-    min-width: 16px;
-    background-image: -gtk-icontheme("onyx-power-symbolic");
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: 16px 16px;
+/* session button (lock, log out, restart, shut down) */
+#launcher-18 button:hover {
+    background-color: @onyx_module;
 }
-#actions-18 { margin-right: 3px; }
+#launcher-18 { margin-right: 3px; }
+
+/* ---- lock screen (xfce4-screensaver) -------------------------------------
+ * The unlock dialog is a GTK window of your session, so it is styled here.
+ * Everything is scoped to its overlay class, other apps are not affected.
+ * Its top bar carries .xfce4-panel, so it already looks like the Onyx bar. */
+.lightdm-gtk-greeter,
+.lightdm-gtk-greeter #screen {
+    background-color: @onyx_module;
+    background-image: none;
+    font-family: "DejaVu Sans Mono", monospace;
+}
+/* The full-screen image behind the dialog shows the desktop wallpaper. Its
+ * picture is scaled away so only this flat background remains; delete the
+ * -gtk-icon-transform line to see your wallpaper again. */
+.lightdm-gtk-greeter#screen > image {
+    background-color: @onyx_module;
+    -gtk-icon-transform: scale(0);
+}
+.lightdm-gtk-greeter #panel_window {
+    background-color: @onyx_bar;
+    min-height: 27px;
+    padding: 0 10px;
+    border: none;
+    box-shadow: none;
+}
+.lightdm-gtk-greeter #panel_window label {
+    color: @onyx_dim;
+    font-size: 9pt;
+}
+/* the screensaver's clock is a fixed 24-hour text; the Onyx bar uses AM/PM */
+.lightdm-gtk-greeter #panel_window label:nth-child(2) {
+    color: transparent;
+}
+.lightdm-gtk-greeter #panel_window image {
+    color: @onyx_text;
+}
+.lightdm-gtk-greeter #login_window {
+    background: none;
+    border: none;
+    box-shadow: none;
+}
+/* one card: avatar, name, password, messages and buttons */
+.lightdm-gtk-greeter #login_box {
+    background-color: @onyx_module;
+    border: 1px solid @onyx_bar;
+    border-radius: 4px;
+    box-shadow: none;
+    padding: 18px 28px 14px;
+}
+.lightdm-gtk-greeter #content_frame,
+.lightdm-gtk-greeter #buttonbox_frame {
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+}
+.lightdm-gtk-greeter #content_frame > border,
+.lightdm-gtk-greeter #buttonbox_frame > border {
+    border: none;
+}
+.lightdm-gtk-greeter #user_image_border {
+    background-color: @onyx_bar;
+    border: 1px solid @onyx_bar;
+    border-radius: 50%;
+    padding: 6px;
+}
+.lightdm-gtk-greeter #user_image_border > border {
+    border: none;
+}
+.lightdm-gtk-greeter #user_image {
+    color: @onyx_dim;
+    -gtk-icon-shadow: none;
+}
+.lightdm-gtk-greeter label {
+    color: @onyx_text;
+    text-shadow: none;
+}
+.lightdm-gtk-greeter #greeter_infobar,
+.lightdm-gtk-greeter #greeter_infobar > revealer > box {
+    background: none;
+    border: none;
+    box-shadow: none;
+}
+.lightdm-gtk-greeter #greeter_infobar label {
+    color: @onyx_dim;
+}
+.lightdm-gtk-greeter #prompt_entry {
+    min-height: 30px;
+    min-width: 240px;
+    padding: 0 10px;
+    background-color: @onyx_bar;
+    color: @onyx_text;
+    caret-color: @onyx_active;
+    border: 1px solid @onyx_bar;
+    border-radius: 3px;
+    box-shadow: none;
+    font-family: "DejaVu Sans Mono", monospace;
+}
+.lightdm-gtk-greeter #prompt_entry:focus {
+    border-color: @onyx_dim;
+}
+.lightdm-gtk-greeter #prompt_entry image {
+    color: @onyx_dim;
+}
+.lightdm-gtk-greeter button {
+    min-height: 26px;
+    padding: 0 12px;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    box-shadow: none;
+    text-shadow: none;
+    color: @onyx_dim;
+}
+.lightdm-gtk-greeter button label {
+    color: @onyx_dim;
+}
+.lightdm-gtk-greeter button:hover {
+    background-color: @onyx_bar;
+}
+.lightdm-gtk-greeter button:hover label {
+    color: @onyx_text;
+}
+.lightdm-gtk-greeter #login_button {
+    background-color: @onyx_active;
+}
+.lightdm-gtk-greeter #login_button label {
+    color: @onyx_module;
+    font-weight: bold;
+}

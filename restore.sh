@@ -100,13 +100,39 @@ step "Ajustes de XFCE"
 if [[ -f $backup/xfconf.tsv ]]; then
     while IFS=$'\t' read -r ch prop arr dump; do
         [[ -n $ch ]] || continue
+        # one property that fails must not stop the rest of the restore
         if [[ $prop == /general/workspace_count && $dump != unset ]]; then
-            set_workspace_count "${dump#*$'\t'}"
+            set_workspace_count "${dump#*$'\t'}" || warn "No se pudo restaurar $ch $prop"
         else
-            xfconf_load "$ch" "$prop" "$arr" "$dump"
+            xfconf_load "$ch" "$prop" "$arr" "$dump" || warn "No se pudo restaurar $ch $prop"
         fi
         info "$ch $prop"
     done <"$backup/xfconf.tsv"
+fi
+
+step "Bloqueo de pantalla"
+if [[ -f $backup/locker.env ]]; then
+    LOCKER_PREV=$(sed -n 's/^LOCKER_PREV=//p' "$backup/locker.env")
+    SS_PREINSTALLED=$(sed -n 's/^SS_PREINSTALLED=//p' "$backup/locker.env")
+    for f in light-locker xfce4-screensaver; do
+        grep -qs '^# onyx-xfce' "$AUTOSTART/$f.desktop" && rm -f "$AUTOSTART/$f.desktop"
+        [[ -f $backup/autostart/$f.desktop ]] && cp -p "$backup/autostart/$f.desktop" "$AUTOSTART/"
+    done
+    # xfce4-screensaver stays installed (programs are never removed); keep it
+    # from starting next to the original locker at the next login.
+    if [[ $LOCKER_PREV != xfce4-screensaver && $SS_PREINSTALLED != 1 && ! -f $AUTOSTART/xfce4-screensaver.desktop ]]; then
+        autostart_hide xfce4-screensaver
+        pkill -u "$(id -u)" -f '^(/usr/bin/)?xfce4-screensaver( |$)' 2>/dev/null || true
+    fi
+    if [[ $LOCKER_PREV == light-locker ]] && ! locker_running light-locker; then
+        for f in "$AUTOSTART/light-locker.desktop" /etc/xdg/autostart/light-locker.desktop; do
+            if [[ -f $f ]]; then
+                autostart_exec "$f"
+                break
+            fi
+        done
+    fi
+    info "Bloqueador anterior: $LOCKER_PREV"
 fi
 
 step "Archivos"

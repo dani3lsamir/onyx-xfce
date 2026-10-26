@@ -20,7 +20,13 @@ ONYX_XFCONF_PROPS=(
     "keyboard-layout /Default/XkbLayout string 0"
     "keyboard-layout /Default/XkbVariant string 0"
     "xfce4-power-manager /xfce4-power-manager/show-tray-icon bool 0"
+    "xfce4-power-manager /xfce4-power-manager/lock-screen-suspend-hibernate bool 0"
+    "xfce4-session /general/LockCommand string 0"
+    "xfce4-screensaver /saver/mode int 0"
+    "xfce4-screensaver /lock/enabled bool 0"
+    "xfce4-screensaver /lock/sleep-activation bool 0"
 )
+AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 
 if [[ -t 1 ]]; then
     C_B=$'\e[1m' C_D=$'\e[90m' C_R=$'\e[0m'
@@ -116,6 +122,25 @@ stop_watchers() {
     pkill -u "$(id -u)" -f "playerctl.* --follow metadata --format \{\{status\}\}" 2>/dev/null || true
 }
 
+# Screen locker processes of this user.
+locker_running() { pgrep -u "$(id -u)" -f "^(/usr/bin/)?$1( |\$)" >/dev/null; }
+
+# Start the program of an autostart .desktop file, detached.
+autostart_exec() { # file
+    local cmd
+    cmd=$(sed -n 's/^Exec=//p' "$1" | head -1)
+    [[ -n $cmd ]] || return 0
+    # shellcheck disable=SC2086  # Exec= is a command line
+    setsid -f $cmd >/dev/null 2>&1 </dev/null
+}
+
+# Hide a system autostart entry for this user only (~/.config/autostart).
+autostart_hide() { # name
+    mkdir -p "$AUTOSTART"
+    printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n# onyx-xfce\n' "$1" \
+        >"$AUTOSTART/$1.desktop"
+}
+
 # Read an xfconf property as "type<TAB>v1<TAB>v2..." or "unset".
 xfconf_dump() { # channel property type is_array
     local out
@@ -145,7 +170,7 @@ xfconf_load() { # channel property is_array dump
     if [[ $arr == 1 ]]; then
         LC_ALL=C xfconf-query -c "$ch" -p "$prop" -n -a "${args[@]}"
     else
-        LC_ALL=C xfconf-query -c "$ch" -p "$prop" -n -t "$type" -s "${vals[1]}"
+        LC_ALL=C xfconf-query -c "$ch" -p "$prop" -n -t "$type" -s "${vals[1]-}" # may be ""
     fi
 }
 

@@ -5,6 +5,7 @@
     onyx-popup wifi <plugin-id>
     onyx-popup bluetooth <plugin-id>
     onyx-popup brightness <plugin-id> <backlight-device>
+    onyx-popup power
 
 Each click starts one short-lived process that exits when the popup closes
 (Esc, click outside, or clicking the same module again). Uses only
@@ -718,10 +719,88 @@ def brightness_popup(plugin_id, device):
 
 
 # --------------------------------------------------------------------------
+# session: lock, log out, restart, shut down
+# --------------------------------------------------------------------------
+SESSION_ACTIONS = {
+    # key: (label, question, xfce4-session-logout flag, fallback command)
+    "logout": ("Cerrar sesión", "¿Cerrar la sesión?", "--logout",
+               ["loginctl", "terminate-session", os.environ.get("XDG_SESSION_ID", "")]),
+    "reboot": ("Reiniciar", "¿Reiniciar el equipo?", "--reboot", ["systemctl", "reboot"]),
+    "halt": ("Apagar", "¿Apagar el equipo?", "--halt", ["systemctl", "poweroff"]),
+}
+
+
+def lock_screen():
+    for cmd in (["xflock4"], ["xfce4-screensaver-command", "--lock"], ["light-locker-command", "-l"]):
+        if have(cmd[0]) and launch(*cmd):
+            return True
+    return False
+
+
+def power_popup():
+    win = Popup("power", width=230)
+    win.header("Sesión")
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    win.box.pack_start(body, False, False, 0)
+    status = win.dim_label("")
+
+    def clear():
+        for child in body.get_children():
+            child.destroy()
+
+    def run(key):
+        _label, _question, flag, fallback = SESSION_ACTIONS[key]
+        ok = have("xfce4-session-logout") and launch("xfce4-session-logout", flag)
+        if not ok:
+            ok = launch(*fallback)
+        if ok:
+            win.close()
+        else:
+            status.set_text("No se pudo ejecutar la acción.")
+            status.show()
+
+    def confirm(key):
+        label, question, _flag, _fallback = SESSION_ACTIONS[key]
+        clear()
+        body.pack_start(win.dim_label(question), False, False, 6)
+        buttons = Gtk.Box(spacing=6, homogeneous=True)
+        cancel = Gtk.Button(label="Cancelar")
+        cancel.connect("clicked", lambda _b: menu())
+        ok = Gtk.Button(label=label)
+        ok.get_style_context().add_class("onyx-primary")
+        ok.connect("clicked", lambda _b: run(key))
+        buttons.pack_start(cancel, True, True, 0)
+        buttons.pack_start(ok, True, True, 0)
+        body.pack_start(buttons, False, False, 4)
+        body.show_all()
+        cancel.grab_focus()  # Enter never shuts down by accident
+
+    def lock():
+        if lock_screen():
+            win.close()
+        else:
+            status.set_text("No hay un bloqueador de pantalla instalado.")
+            status.show()
+
+    def menu():
+        clear()
+        body.pack_start(win.row("Bloquear", "", False, lock), False, False, 0)
+        win.separator(body)
+        for key in ("logout", "reboot", "halt"):
+            body.pack_start(win.row(SESSION_ACTIONS[key][0], "", False, confirm, key), False, False, 0)
+        body.show_all()
+
+    menu()
+    win.box.pack_start(status, False, False, 2)
+    win.hidden.append(status)
+    win.popup()
+
+
+# --------------------------------------------------------------------------
 def main(argv):
     kind = argv[1] if len(argv) > 1 else ""
     arg = argv[2] if len(argv) > 2 else ""
-    if kind not in ("calendar", "wifi", "bluetooth", "brightness"):
+    if kind not in ("calendar", "wifi", "bluetooth", "brightness", "power"):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     if not single_instance(kind):
@@ -736,6 +815,8 @@ def main(argv):
         wifi_popup(arg)
     elif kind == "bluetooth":
         bluetooth_popup(arg)
+    elif kind == "power":
+        power_popup()
     else:
         brightness_popup(arg, argv[3] if len(argv) > 3 else "")
     return 0

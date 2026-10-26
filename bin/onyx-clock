@@ -1,5 +1,5 @@
 #!/bin/bash
-# Onyx XFCE — clock module for genmon: "Oct 26 · 4:27 P".
+# Onyx XFCE — clock module for genmon: "Oct 26 · 4:27 PM".
 # Click opens the calendar popup. Only bash builtins: no extra processes.
 # shellcheck source=bin/onyx-common.sh
 . "${0%/*}/onyx-common.sh"
@@ -8,7 +8,8 @@ printf -v long '%(%A, %-d %B %Y)T' -1      # tooltip, in the user's locale
 export LC_ALL=${ONYX_CLOCK_LOCALE:-C}
 printf -v now '%(%b %-d|%-I:%M|%H)T' -1
 IFS='|' read -r day hm h24 <<<"$now"
-(( 10#$h24 < 12 )) && ap=A || ap=P
+(( 10#$h24 < 12 )) && ap=AM || ap=PM
+[[ $ONYX_CLOCK_AMPM == short ]] && ap=${ap:0:1} # "4:27 P"
 
 click="${ONYX_BIN}/onyx-popup calendar"
 printf '<txt>%s · %s %s</txt><txtclick>%s</txtclick><tool>%s</tool>' \

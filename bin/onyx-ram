@@ -1,0 +1,30 @@
+#!/bin/bash
+# Onyx XFCE — RAM usage module for genmon.
+# Used = MemTotal - MemAvailable, the same figure free(1) and the task
+# manager report as "used".
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+while read -r key value _; do
+    case $key in
+        MemTotal:) total=$value ;;
+        MemAvailable:) avail=$value ;;
+        SwapTotal:) swap_total=$value ;;
+        SwapFree:) swap_free=$value ;;
+    esac
+done </proc/meminfo
+
+used=$((total - avail))
+pct=$(((100 * used + total / 2) / total))
+swap_used=$((swap_total - swap_free))
+
+# kB -> "x.y" GiB with integer math (printf -v: no subshells)
+gib() { printf -v "$1" '%d.%d' $(($2 / 1048576)) $((($2 % 1048576) * 10 / 1048576)); }
+u="" t="" su="" st=""
+gib u "$used"
+gib t "$total"
+gib su "$swap_used"
+gib st "$swap_total"
+
+printf '<icon>onyx-ram-symbolic</icon><txt>%d%%</txt><tool>RAM: %s / %s GiB\nSwap: %s / %s GiB</tool>' \
+    "$pct" "$u" "$t" "$su" "$st"

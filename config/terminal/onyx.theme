@@ -1,0 +1,13 @@
+[Scheme]
+Name=Onyx
+ColorForeground=#eeeeee
+ColorBackground=#101010
+ColorCursor=#f0f0f0
+ColorCursorUseDefault=FALSE
+ColorBold=#f0f0f0
+ColorBoldUseDefault=FALSE
+ColorSelection=#eeeeee
+ColorSelectionBackground=#3a3a3a
+ColorSelectionUseDefault=FALSE
+TabActivityColor=#f0f0f0
+ColorPalette=#101010;#c8c8c8;#a8a8a8;#d4d4d4;#8c8c8c;#b4b4b4;#9c9c9c;#eeeeee;#4e4e4e;#e0e0e0;#bcbcbc;#e8e8e8;#a0a0a0;#c4c4c4;#b0b0b0;#f0f0f0

@@ -1,0 +1,91 @@
+#!/bin/bash
+# Onyx XFCE — outdoor weather module for genmon (Open-Meteo, no API key).
+#
+#   onyx-weather <plugin-id>          print the module (called by genmon)
+#   onyx-weather <plugin-id> fetch    download now (runs detached)
+#
+# genmon runs commands synchronously inside the panel, so the network request
+# never happens here: a stale cache only spawns a detached fetch, which asks
+# the panel to refresh this plugin when it finishes.
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+id=$1
+cache="$ONYX_RUN/weather"
+lock="$ONYX_RUN/weather.lock"
+ttl=${ONYX_WEATHER_TTL:-2700}
+retry=300 # seconds between attempts after a failure
+now=$(onyx_now)
+
+fetch() {
+    mkdir "$lock" 2>/dev/null || exit 0
+    trap 'rmdir "$lock"' EXIT
+    printf '%s\n' "$now" >"$cache.try"
+    local url json cur
+    url="https://api.open-meteo.com/v1/forecast?latitude=${ONYX_WEATHER_LAT}&longitude=${ONYX_WEATHER_LON}"
+    url+="&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day"
+    url+="&timezone=auto"
+    json=$(curl -fsS --max-time 20 "$url") || exit 1
+    [[ $json =~ \"current\":\{([^}]*)\} ]] || exit 1
+    cur=${BASH_REMATCH[1]}
+    num() { [[ $cur =~ \"$1\":(-?[0-9.]+) ]] && printf '%s' "${BASH_REMATCH[1]}"; }
+    local t feels hum wind code day
+    t=$(num temperature_2m) feels=$(num apparent_temperature) hum=$(num relative_humidity_2m)
+    wind=$(num wind_speed_10m) code=$(num weather_code) day=$(num is_day)
+    [[ -n $t && -n $code ]] || exit 1
+    printf '%s %s %s %s %s %s %s\n' "$now" "$t" "$code" "${day:-1}" "${feels:--}" "${hum:--}" "${wind:--}" >"$cache.new"
+    mv -f "$cache.new" "$cache"
+    onyx_refresh "$id"
+}
+
+if [[ $2 == fetch ]]; then
+    fetch
+    exit
+fi
+
+# Round a decimal string ("31.6", "-0.4") to an integer without bc/awk.
+round() {
+    local v=$1 sign=""
+    [[ $v == -* ]] && sign=- v=${v#-}
+    local int=${v%%.*} frac=${v#*.}
+    [[ $v == *.* ]] || frac=0
+    ((${frac:0:1} >= 5)) && int=$((int + 1))
+    ((int == 0)) && sign=""
+    printf '%s%d' "$sign" "$int"
+}
+
+stamp=0
+read -r stamp temp code day feels hum wind 2>/dev/null <"$cache"
+read -r tried 2>/dev/null <"$cache.try"
+age=$((now - ${stamp:-0}))
+if ((age >= ttl && now - ${tried:-0} >= retry)); then
+    onyx_detach "$0" "$id" fetch
+fi
+
+# Older than 3 h (e.g. offline since the morning): do not pretend it is current.
+if [[ -z $temp ]] || ((age > 10800)); then
+    printf '<icon>onyx-weather-overcast-symbolic</icon><txt><span foreground="%s">--°C</span></txt>' "$ONYX_DIM"
+    printf '<tool>%s: sin datos todavía (se reintenta cada %d min)</tool>' "$ONYX_WEATHER_PLACE" $((retry / 60))
+    exit 0
+fi
+
+# WMO weather interpretation codes -> icon + description
+case $code in
+    0) icon=clear desc="Despejado" ;;
+    1 | 2) icon=few-clouds desc="Parcialmente nublado" ;;
+    3) icon=overcast desc="Nublado" ;;
+    45 | 48) icon=fog desc="Niebla" ;;
+    51 | 53 | 55 | 56 | 57) icon=showers desc="Llovizna" ;;
+    61 | 63 | 65 | 66 | 67 | 80 | 81 | 82) icon=showers desc="Lluvia" ;;
+    71 | 73 | 75 | 77 | 85 | 86) icon=snow desc="Nieve" ;;
+    95 | 96 | 99) icon=storm desc="Tormenta" ;;
+    *) icon=overcast desc="Código $code" ;;
+esac
+if [[ $day == 0 && ($icon == clear || $icon == few-clouds) ]]; then
+    icon+=-night
+fi
+
+printf -v updated '%(%H:%M)T' "$stamp"
+printf '<icon>onyx-weather-%s-symbolic</icon><txt>%s°C</txt>' "$icon" "$(round "$temp")"
+printf '<tool>%s\n%s, %s°C (sensación %s°C)\nHumedad %s%% · Viento %s km/h\nActualizado %s</tool>' \
+    "$ONYX_WEATHER_PLACE" "$desc" "$temp" "$feels" "$hum" "$wind" "$updated"

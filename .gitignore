@@ -1,0 +1,46 @@
+# Onyx XFCE — never publish personal data, secrets or backups.
+
+# Backups created by install.sh (they contain your panel, .bashrc, gtk.css)
+backups/
+*.bak
+*.orig
+*.tar.gz
+*.tgz
+
+# Local copies of personal configuration that must stay on this machine
+xfce-perchannel-xml/
+*.xml.local
+.bashrc
+.bash_history
+onyx.conf.local
+
+# Credentials, tokens and keys
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.gpg
+*.asc
+*.kdbx
+id_rsa*
+id_ed25519*
+*token*
+*secret*
+*password*
+*credential*
+.netrc
+.git-credentials
+system-connections/
+*.nmconnection
+
+# Runtime, caches and editors
+__pycache__/
+*.pyc
+*.log
+*.swp
+*~
+.cache/
+.directory
+.DS_Store

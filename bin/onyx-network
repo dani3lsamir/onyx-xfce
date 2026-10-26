@@ -1,0 +1,69 @@
+#!/bin/bash
+# Onyx XFCE — network status module for genmon (Wi-Fi / Ethernet).
+# State comes from sysfs, rfkill and /proc/net/wireless; nmcli is only asked
+# for the connection name when the link changes. Click: Wi-Fi popup.
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+id=$1
+click="$ONYX_BIN/onyx-popup wifi $id"
+
+wifi="" wired=""
+for dev in /sys/class/net/*; do
+    name=${dev##*/}
+    [[ -e $dev/device ]] || continue # skip lo, bridges, docker, VPN...
+    if [[ -d $dev/wireless ]]; then
+        [[ -z $wifi ]] && wifi=$name
+    elif [[ -z $wired ]]; then
+        read -r carrier 2>/dev/null <"$dev/carrier"
+        [[ $carrier == 1 ]] && wired=$name
+    fi
+done
+
+blocked=0
+for r in /sys/class/rfkill/rfkill*; do
+    read -r type 2>/dev/null <"$r/type"
+    [[ $type == wlan ]] || continue
+    read -r soft <"$r/soft"
+    read -r hard <"$r/hard"
+    ((soft || hard)) && blocked=1
+done
+
+link=""
+if [[ -n $wifi ]]; then
+    while read -r iface _ quality _; do
+        [[ $iface == "$wifi:" ]] && link=${quality%.}
+    done </proc/net/wireless
+    read -r oper 2>/dev/null <"/sys/class/net/$wifi/operstate"
+    [[ $oper == up ]] || link=""
+fi
+
+# Connection name, cached until the active interface changes.
+conn_name() {
+    local iface=$1 cache="$ONYX_RUN/network" key name=""
+    key="$iface:$(</sys/class/net/"$iface"/ifindex)"
+    if IFS='|' read -r ckey name 2>/dev/null <"$cache" && [[ $ckey == "$key" ]]; then
+        printf '%s' "$name"
+        return
+    fi
+    command -v nmcli >/dev/null && name=$(nmcli -t -g GENERAL.CONNECTION device show "$iface" 2>/dev/null)
+    printf '%s|%s\n' "$key" "$name" >"$cache"
+    printf '%s' "$name"
+}
+
+if [[ -n $wired ]]; then
+    name=$(conn_name "$wired")
+    icon=onyx-wired tip="Cableada ($wired)${name:+: $(onyx_esc "$name")}"
+elif [[ -n $link ]]; then
+    pct=$((link * 100 / 70))
+    ((pct > 100)) && pct=100
+    if ((pct >= 67)); then icon=onyx-wifi-3; elif ((pct >= 34)); then icon=onyx-wifi-2; else icon=onyx-wifi-1; fi
+    tip="Wi-Fi: $(onyx_esc "$(conn_name "$wifi")") · señal $pct%"
+elif ((blocked)); then
+    icon=onyx-wifi-off tip="Wi-Fi desactivado"
+else
+    rm -f "$ONYX_RUN/network"
+    icon=onyx-wifi-none tip="Sin conexión"
+fi
+
+printf '<icon>%s-symbolic</icon><iconclick>%s</iconclick><tool>%s\nClic: redes Wi-Fi</tool>' "$icon" "$click" "$tip"

@@ -1,0 +1,745 @@
+#!/usr/bin/env python3
+"""Onyx XFCE — small popups opened from the panel modules.
+
+    onyx-popup calendar
+    onyx-popup wifi <plugin-id>
+    onyx-popup bluetooth <plugin-id>
+    onyx-popup brightness <plugin-id> <backlight-device>
+
+Each click starts one short-lived process that exits when the popup closes
+(Esc, click outside, or clicking the same module again). Uses only
+PyGObject/GTK 3 and D-Bus (NetworkManager, BlueZ, logind), already present
+on Linux Mint XFCE.
+"""
+import os
+import subprocess
+import sys
+import time
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
+
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/dev/shm"), "onyx-xfce")
+PIDFILE = os.path.join(RUN, "popup.pid")
+CLOSEDFILE = os.path.join(RUN, "popup.closed")
+
+CSS = b"""
+window.onyx { background-color: #101010; color: #eeeeee; border: 1px solid #252525;
+              font-family: "DejaVu Sans Mono"; font-size: 9pt; }
+window.onyx * { font-family: "DejaVu Sans Mono"; }
+.onyx-title { font-weight: bold; color: #eeeeee; }
+.onyx-dim { color: #8c8c8c; }
+.onyx-sep { background-color: #252525; min-height: 1px; margin: 4px 0; }
+window.onyx button { background: none; border: none; box-shadow: none; border-radius: 3px;
+                     padding: 4px 8px; color: #eeeeee; text-shadow: none; -gtk-icon-shadow: none; }
+window.onyx button:hover { background-color: #252525; }
+window.onyx button.onyx-active label { color: #f0f0f0; font-weight: bold; }
+window.onyx button.onyx-primary { background-color: #f0f0f0; }
+window.onyx button.onyx-primary label { color: #101010; font-weight: bold; }
+window.onyx entry { background-color: #252525; color: #eeeeee; border: 1px solid #252525;
+                    border-radius: 3px; box-shadow: none; caret-color: #f0f0f0; }
+window.onyx entry:focus { border-color: #8c8c8c; }
+window.onyx switch { background-color: #252525; border: none; border-radius: 9px; min-height: 18px; }
+window.onyx switch:checked { background-color: #eeeeee; }
+window.onyx switch slider { background-color: #8c8c8c; border: none; border-radius: 7px;
+                            min-width: 14px; min-height: 14px; margin: 2px; box-shadow: none; }
+window.onyx switch:checked slider { background-color: #101010; }
+window.onyx switch image { color: transparent; }
+window.onyx scale trough { background-color: #252525; border: none; border-radius: 3px; min-height: 6px; }
+window.onyx scale highlight { background-color: #eeeeee; border: none; border-radius: 3px; }
+window.onyx scale slider { background-color: #f0f0f0; border: none; border-radius: 8px;
+                           min-width: 14px; min-height: 14px; margin: -4px; box-shadow: none; }
+window.onyx calendar { background-color: #101010; color: #eeeeee; border: none; padding: 2px; }
+window.onyx calendar.header { background: none; border: none; color: #eeeeee; }
+window.onyx calendar.button { color: #8c8c8c; background: none; border: none; }
+window.onyx calendar.button:hover { color: #f0f0f0; }
+window.onyx calendar:indeterminate { color: #8c8c8c; }
+window.onyx calendar:selected { background-color: #f0f0f0; color: #101010; border-radius: 3px; }
+window.onyx calendar.highlight { color: #8c8c8c; font-weight: bold; }
+"""
+
+
+# --------------------------------------------------------------------------
+# helpers
+# --------------------------------------------------------------------------
+def read_file(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def refresh_genmon(plugin_id):
+    """Re-run a genmon plugin so the panel shows the new state at once."""
+    if not plugin_id:
+        return
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+        bus.call_sync("org.xfce.Panel", "/org/xfce/Panel", "org.xfce.Panel", "PluginEvent",
+                      GLib.Variant("(ssv)", ("genmon-%s" % plugin_id, "refresh",
+                                             GLib.Variant("b", True))),
+                      None, Gio.DBusCallFlags.NONE, 2000, None)
+    except GLib.Error:
+        pass
+
+
+def launch(*argv):
+    """Start a program detached from the popup."""
+    try:
+        subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except OSError:
+        return False
+
+
+def have(program):
+    return GLib.find_program_in_path(program) is not None
+
+
+def single_instance(kind):
+    """Clicking a module while its popup is open closes it (toggle)."""
+    os.makedirs(RUN, mode=0o700, exist_ok=True)
+    # The click that closed a popup through focus loss arrives right after it.
+    closed = read_file(CLOSEDFILE).split()
+    if len(closed) == 2 and closed[0] == kind and time.time() - float(closed[1]) < 0.4:
+        return False
+    old = read_file(PIDFILE).split()
+    if len(old) == 2 and old[0].isdigit():
+        try:
+            os.kill(int(old[0]), 15)
+            if old[1] == kind:
+                return False
+        except OSError:
+            pass
+    with open(PIDFILE, "w") as f:
+        f.write("%d %s\n" % (os.getpid(), kind))
+    return True
+
+
+# --------------------------------------------------------------------------
+# popup window
+# --------------------------------------------------------------------------
+class Popup(Gtk.Window):
+    def __init__(self, kind, width=260):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.kind = kind
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+        self.set_size_request(width, -1)
+        self.get_style_context().add_class("onyx")
+        self.connect("key-press-event", self._on_key)
+        self.connect("focus-out-event", self._on_focus_out)
+        self.connect("destroy", self._on_destroy)
+        self.shown_at = 0.0
+        self.hidden = []  # widgets kept hidden when the popup is first shown
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.box.set_border_width(8)
+        self.add(self.box)
+
+    # layout helpers ------------------------------------------------------
+    def header(self, title, widget=None):
+        row = Gtk.Box(spacing=8)
+        label = Gtk.Label(label=title, xalign=0)
+        label.get_style_context().add_class("onyx-title")
+        row.pack_start(label, True, True, 0)
+        if widget is not None:
+            row.pack_end(widget, False, False, 0)
+        self.box.pack_start(row, False, False, 2)
+        return row
+
+    def separator(self, box=None):
+        sep = Gtk.Box()
+        sep.get_style_context().add_class("onyx-sep")
+        (box or self.box).pack_start(sep, False, False, 0)
+
+    @staticmethod
+    def row(text, right="", active=False, callback=None, *args):
+        button = Gtk.Button()
+        inner = Gtk.Box(spacing=12)
+        left = Gtk.Label(label=text, xalign=0)
+        left.set_ellipsize(3)  # Pango.EllipsizeMode.END
+        inner.pack_start(left, True, True, 0)
+        if right:
+            r = Gtk.Label(label=right, xalign=1)
+            r.get_style_context().add_class("onyx-dim")
+            inner.pack_end(r, False, False, 0)
+        button.add(inner)
+        if active:
+            button.get_style_context().add_class("onyx-active")
+        if callback:
+            button.connect("clicked", lambda _b: callback(*args))
+        return button
+
+    @staticmethod
+    def dim_label(text):
+        label = Gtk.Label(label=text, xalign=0)
+        label.set_line_wrap(True)
+        label.get_style_context().add_class("onyx-dim")
+        return label
+
+    # placement / lifetime --------------------------------------------------
+    def popup(self):
+        self.show_all()
+        for widget in self.hidden:
+            widget.hide()
+        display = Gdk.Display.get_default()
+        _screen, px, py = display.get_default_seat().get_pointer().get_position()
+        monitor = display.get_monitor_at_point(px, py)
+        area, geo = monitor.get_workarea(), monitor.get_geometry()
+        width, height = self.get_size()
+        x = min(max(px - width // 2, area.x + 4), area.x + area.width - width - 4)
+        top = area.y if area.y > geo.y else geo.y + 28  # below the bar
+        self.move(x, top + 4)
+        self.shown_at = time.time()
+        self.present()
+        Gtk.main()
+
+    def close(self):
+        self.destroy()
+
+    def _on_key(self, _w, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.close()
+
+    def _on_focus_out(self, _w, _e):
+        # A focus change still in flight from the previous window can arrive
+        # right after mapping; only a later focus loss means "clicked outside".
+        if time.time() - self.shown_at < 0.3:
+            self.present()
+            return
+        with open(CLOSEDFILE, "w") as f:
+            f.write("%s %f\n" % (self.kind, time.time()))
+        self.close()
+
+    def _on_destroy(self, _w):
+        if read_file(PIDFILE).split()[:1] == [str(os.getpid())]:
+            os.unlink(PIDFILE)
+        Gtk.main_quit()
+
+
+# --------------------------------------------------------------------------
+# calendar
+# --------------------------------------------------------------------------
+def calendar_popup():
+    win = Popup("calendar", width=250)
+    today = GLib.DateTime.new_now_local()
+    title = today.format("%A, %-d %B %Y")
+    win.header(title[:1].upper() + title[1:])
+    cal = Gtk.Calendar()
+    cal.set_display_options(Gtk.CalendarDisplayOptions.SHOW_HEADING
+                            | Gtk.CalendarDisplayOptions.SHOW_DAY_NAMES)
+
+    def mark(_c=None):
+        cal.clear_marks()
+        year, month, _day = cal.get_date()
+        if year == today.get_year() and month == today.get_month() - 1:
+            cal.mark_day(today.get_day_of_month())
+
+    cal.connect("month-changed", mark)
+    mark()
+    win.box.pack_start(cal, False, False, 4)
+    win.popup()
+
+
+# --------------------------------------------------------------------------
+# Wi-Fi (NetworkManager over D-Bus)
+# --------------------------------------------------------------------------
+NM = "org.freedesktop.NetworkManager"
+NM_PATH = "/org/freedesktop/NetworkManager"
+
+
+class NetworkManager:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+
+    def call(self, path, iface, method, args=None, timeout=8000):
+        return self.bus.call_sync(NM, path, iface, method, args, None,
+                                  Gio.DBusCallFlags.NONE, timeout, None).unpack()
+
+    def prop(self, path, iface, name):
+        return self.call(path, "org.freedesktop.DBus.Properties", "Get",
+                         GLib.Variant("(ss)", (iface, name)))[0]
+
+    def set_prop(self, path, iface, name, value):
+        self.call(path, "org.freedesktop.DBus.Properties", "Set",
+                  GLib.Variant("(ssv)", (iface, name, value)))
+
+    def wifi_device(self):
+        for dev in self.call(NM_PATH, NM, "GetDevices")[0]:
+            if self.prop(dev, NM + ".Device", "DeviceType") == 2:
+                return dev
+        return None
+
+    def access_points(self, dev):
+        """Strongest AP per SSID: list of dicts sorted by signal."""
+        active = self.prop(dev, NM + ".Device.Wireless", "ActiveAccessPoint")
+        best = {}
+        for ap in self.call(dev, NM + ".Device.Wireless", "GetAllAccessPoints")[0]:
+            iface = NM + ".AccessPoint"
+            ssid = bytes(self.prop(ap, iface, "Ssid")).decode("utf-8", "replace")
+            if not ssid:
+                continue
+            item = {"path": ap, "ssid": ssid, "signal": self.prop(ap, iface, "Strength"),
+                    "flags": self.prop(ap, iface, "Flags"),
+                    "wpa": self.prop(ap, iface, "WpaFlags"), "rsn": self.prop(ap, iface, "RsnFlags"),
+                    "active": ap == active}
+            old = best.get(ssid)
+            if old is None or item["active"] or (not old["active"] and item["signal"] > old["signal"]):
+                best[ssid] = item
+        return sorted(best.values(), key=lambda a: (not a["active"], -a["signal"]))
+
+    def saved_connections(self):
+        """SSID -> connection path for saved Wi-Fi profiles."""
+        saved = {}
+        settings = NM_PATH + "/Settings"
+        for conn in self.call(settings, NM + ".Settings", "ListConnections")[0]:
+            try:
+                cfg = self.call(conn, NM + ".Settings.Connection", "GetSettings")[0]
+            except GLib.Error:
+                continue
+            wifi = cfg.get("802-11-wireless")
+            if wifi and "ssid" in wifi:
+                saved[bytes(wifi["ssid"]).decode("utf-8", "replace")] = conn
+        return saved
+
+
+def security_of(ap):
+    if ap["rsn"] & 0x200 or ap["wpa"] & 0x200:
+        return "802.1x"
+    if ap["rsn"] & 0x400:
+        return "wpa3"
+    if ap["rsn"]:
+        return "wpa2"
+    if ap["wpa"]:
+        return "wpa"
+    if ap["flags"] & 0x1:
+        return "wep"
+    return ""
+
+
+def wifi_popup(plugin_id):
+    win = Popup("wifi", width=300)
+    try:
+        nm = NetworkManager()
+        dev = nm.wifi_device()
+    except GLib.Error:
+        nm, dev = None, None
+
+    switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+    win.header("Wi-Fi", switch if nm else None)
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    win.box.pack_start(body, False, False, 0)
+    status = win.dim_label("")
+    tools = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+    def editor():
+        launch("nm-connection-editor")
+        win.close()
+
+    def say(text):
+        status.set_text(text)
+        status.set_visible(bool(text))
+
+    def clear():
+        for child in body.get_children():
+            child.destroy()
+
+    def watch_activation(active_path, ssid):
+        """Poll the new active connection until it is up or fails."""
+        deadline = time.time() + 30
+
+        def tick():
+            try:
+                state = nm.prop(active_path, NM + ".Connection.Active", "State")
+            except GLib.Error:
+                state = 4
+            if state == 2:
+                say("Conectado a %s" % ssid)
+                refresh_genmon(plugin_id)
+                GLib.timeout_add(700, win.close)
+                return False
+            if state == 4 or time.time() > deadline:
+                say("No se pudo conectar a %s" % ssid)
+                fill()
+                return False
+            return True
+
+        GLib.timeout_add(500, tick)
+
+    def connect(ap, password=None):
+        say("Conectando a %s…" % ap["ssid"])
+        try:
+            saved = nm.saved_connections().get(ap["ssid"])
+            if saved and password is None:
+                active = nm.call(NM_PATH, NM, "ActivateConnection",
+                                 GLib.Variant("(ooo)", (saved, dev, ap["path"])))[0]
+            else:
+                settings = {}
+                sec = security_of(ap)
+                if sec in ("wpa", "wpa2", "wpa3"):
+                    settings["802-11-wireless-security"] = {
+                        "key-mgmt": GLib.Variant("s", "sae" if sec == "wpa3" else "wpa-psk"),
+                        "psk": GLib.Variant("s", password or "")}
+                elif sec == "wep":
+                    settings["802-11-wireless-security"] = {
+                        "key-mgmt": GLib.Variant("s", "none"),
+                        "wep-key0": GLib.Variant("s", password or "")}
+                active = nm.call(NM_PATH, NM, "AddAndActivateConnection",
+                                 GLib.Variant("(a{sa{sv}}oo)", (settings, dev, ap["path"])))[1]
+            watch_activation(active, ap["ssid"])
+        except GLib.Error as err:
+            say("Error: %s" % err.message.split(":")[-1].strip())
+
+    def disconnect():
+        try:
+            nm.call(dev, NM + ".Device", "Disconnect")
+            refresh_genmon(plugin_id)
+            win.close()
+        except GLib.Error as err:
+            say("Error: %s" % err.message)
+
+    def ask_password(ap):
+        clear()
+        body.pack_start(win.dim_label("Contraseña para %s" % ap["ssid"]), False, False, 4)
+        entry = Gtk.Entry(visibility=False, input_purpose=Gtk.InputPurpose.PASSWORD)
+        body.pack_start(entry, False, False, 2)
+        show = Gtk.CheckButton(label="Mostrar")
+        show.connect("toggled", lambda b: entry.set_visibility(b.get_active()))
+        buttons = Gtk.Box(spacing=6, homogeneous=True)
+        cancel = Gtk.Button(label="Cancelar")
+        ok = Gtk.Button(label="Conectar")
+        ok.get_style_context().add_class("onyx-primary")
+        cancel.connect("clicked", lambda _b: fill())
+        submit = lambda *_a: entry.get_text() and connect(ap, entry.get_text())  # noqa: E731
+        ok.connect("clicked", submit)
+        entry.connect("activate", submit)
+        buttons.pack_start(cancel, True, True, 0)
+        buttons.pack_start(ok, True, True, 0)
+        body.pack_start(buttons, False, False, 4)
+        body.show_all()
+        entry.grab_focus()
+
+    def choose(ap):
+        if ap["active"]:
+            disconnect()
+            return
+        sec = security_of(ap)
+        if sec == "802.1x":  # enterprise networks need the full editor
+            editor()
+        elif sec and ap["ssid"] not in saved:
+            ask_password(ap)
+        else:
+            connect(ap)
+
+    saved = {}
+
+    def fill():
+        nonlocal saved
+        clear()
+        if nm is None:
+            body.pack_start(win.dim_label("NetworkManager no está disponible."), False, False, 4)
+        elif dev is None:
+            body.pack_start(win.dim_label("No se encontró un adaptador Wi-Fi."), False, False, 4)
+        elif not switch.get_active():
+            body.pack_start(win.dim_label("Wi-Fi desactivado."), False, False, 4)
+        else:
+            try:
+                saved = nm.saved_connections()
+                aps = nm.access_points(dev)
+            except GLib.Error as err:
+                aps = []
+                say("Error: %s" % err.message)
+            if not aps:
+                body.pack_start(win.dim_label("Buscando redes…"), False, False, 4)
+            for ap in aps[:12]:
+                right = "%3d%%  %-5s" % (ap["signal"], security_of(ap) or "libre")
+                label = ("● " if ap["active"] else "  ") + ap["ssid"]
+                body.pack_start(win.row(label, right, ap["active"], choose, ap), False, False, 0)
+        body.show_all()
+
+    def on_switch(_s, _p):
+        try:
+            nm.set_prop(NM_PATH, NM, "WirelessEnabled", GLib.Variant("b", switch.get_active()))
+        except GLib.Error as err:
+            say("Error: %s" % err.message)
+        refresh_genmon(plugin_id)
+        GLib.timeout_add(1500, lambda: fill() and False)
+        fill()
+
+    def rescan():
+        try:
+            nm.call(dev, NM + ".Device.Wireless", "RequestScan", GLib.Variant("(a{sv})", ({},)))
+            say("Buscando redes…")
+        except GLib.Error:
+            pass  # NM rate-limits scans; the cached list is still valid
+        GLib.timeout_add(3000, lambda: (fill(), say("")) and False)
+
+    if nm:
+        try:
+            switch.set_active(nm.prop(NM_PATH, NM, "WirelessEnabled"))
+        except GLib.Error:
+            pass
+        switch.connect("notify::active", on_switch)
+    fill()
+
+    win.box.pack_start(status, False, False, 2)
+    win.separator()
+    if dev:
+        tools.pack_start(win.row("Buscar redes", "", False, rescan), False, False, 0)
+    if have("nm-connection-editor"):
+        tools.pack_start(win.row("Editar conexiones…", "", False, editor), False, False, 0)
+    win.box.pack_start(tools, False, False, 0)
+    win.hidden.append(status)
+    win.popup()
+
+
+# --------------------------------------------------------------------------
+# Bluetooth (rfkill + BlueZ over D-Bus)
+# --------------------------------------------------------------------------
+def rfkill_bluetooth():
+    """(present, on) from sysfs, like the panel module."""
+    present, on = False, False
+    base = "/sys/class/rfkill"
+    for entry in os.listdir(base) if os.path.isdir(base) else []:
+        path = os.path.join(base, entry)
+        if read_file(path + "/type") == "bluetooth":
+            present = True
+            on = on or (read_file(path + "/soft") == "0" and read_file(path + "/hard") == "0")
+    return present, on
+
+
+class BlueZ:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+
+    def objects(self):
+        return self.bus.call_sync("org.bluez", "/", "org.freedesktop.DBus.ObjectManager",
+                                  "GetManagedObjects", None, None, Gio.DBusCallFlags.NONE,
+                                  3000, None).unpack()[0]
+
+    def adapter(self):
+        for path, ifaces in self.objects().items():
+            if "org.bluez.Adapter1" in ifaces:
+                return path, ifaces["org.bluez.Adapter1"]
+        return None, None
+
+    def devices(self):
+        out = []
+        for path, ifaces in self.objects().items():
+            dev = ifaces.get("org.bluez.Device1")
+            if dev and (dev.get("Paired") or dev.get("Connected")):
+                out.append({"path": path, "name": dev.get("Alias") or dev.get("Name") or path[-17:],
+                            "connected": dev.get("Connected", False)})
+        return sorted(out, key=lambda d: (not d["connected"], d["name"].lower()))
+
+    def set_powered(self, path, value):
+        self.bus.call_sync("org.bluez", path, "org.freedesktop.DBus.Properties", "Set",
+                           GLib.Variant("(ssv)", ("org.bluez.Adapter1", "Powered",
+                                                  GLib.Variant("b", value))),
+                           None, Gio.DBusCallFlags.NONE, 5000, None)
+
+    def device_call(self, path, method, done):
+        self.bus.call("org.bluez", path, "org.bluez.Device1", method, None, None,
+                      Gio.DBusCallFlags.NONE, 30000, None, done)
+
+
+def bluetooth_popup(plugin_id):
+    win = Popup("bluetooth", width=280)
+    present, on = rfkill_bluetooth()
+    try:
+        bz = BlueZ()
+        adapter, props = bz.adapter()
+    except GLib.Error:
+        bz, adapter, props = None, None, None
+    switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+    switch.set_active(on and bool(props and props.get("Powered")))
+    win.header("Bluetooth", switch if present or adapter else None)
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    win.box.pack_start(body, False, False, 0)
+    status = win.dim_label("")
+
+    def say(text):
+        status.set_text(text)
+        status.set_visible(bool(text))
+
+    def fill():
+        for child in body.get_children():
+            child.destroy()
+        if not (present or adapter):
+            body.pack_start(win.dim_label("No se encontró un adaptador Bluetooth."), False, False, 4)
+        elif bz is None:
+            body.pack_start(win.dim_label("El servicio bluetooth no está activo."), False, False, 4)
+        elif not switch.get_active():
+            body.pack_start(win.dim_label("Bluetooth desactivado."), False, False, 4)
+        else:
+            try:
+                devices = bz.devices()
+            except GLib.Error:
+                devices = []
+            if not devices:
+                body.pack_start(win.dim_label("Sin dispositivos emparejados."), False, False, 4)
+            for dev in devices:
+                label = ("● " if dev["connected"] else "  ") + dev["name"]
+                right = "conectado" if dev["connected"] else "emparejado"
+                body.pack_start(win.row(label, right, dev["connected"], toggle_device, dev),
+                                False, False, 0)
+        body.show_all()
+
+    def toggle_device(dev):
+        method = "Disconnect" if dev["connected"] else "Connect"
+        say(("Desconectando %s…" if dev["connected"] else "Conectando %s…") % dev["name"])
+
+        def done(bus, result):
+            try:
+                bus.call_finish(result)
+                say("")
+            except GLib.Error as err:
+                say("Error: %s" % err.message.split(":")[-1].strip())
+            refresh_genmon(plugin_id)
+            fill()
+
+        bz.device_call(dev["path"], method, done)
+
+    def on_switch(_s, _p):
+        nonlocal adapter
+        want = switch.get_active()
+        try:
+            if want:
+                subprocess.run(["rfkill", "unblock", "bluetooth"], check=False, timeout=5)
+                time.sleep(0.6)  # adapter re-registers after the unblock
+                if bz:
+                    adapter = adapter or bz.adapter()[0]
+                    if adapter:
+                        bz.set_powered(adapter, True)
+            else:
+                if bz and adapter:
+                    bz.set_powered(adapter, False)
+                subprocess.run(["rfkill", "block", "bluetooth"], check=False, timeout=5)
+        except (GLib.Error, OSError, subprocess.SubprocessError) as err:
+            say("Error: %s" % getattr(err, "message", err))
+        refresh_genmon(plugin_id)
+        fill()
+
+    switch.connect("notify::active", on_switch)
+    fill()
+    win.box.pack_start(status, False, False, 2)
+    manager = next((p for p in ("blueman-manager",) if have(p)), None)
+    if manager:
+        win.separator()
+        win.box.pack_start(win.row("Administrar dispositivos…", "", False,
+                                   lambda: (launch(manager), win.close())), False, False, 0)
+    win.hidden.append(status)
+    win.popup()
+
+
+# --------------------------------------------------------------------------
+# brightness (logind SetBrightness, no root needed)
+# --------------------------------------------------------------------------
+def set_backlight(device, raw):
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+        bus.call_sync("org.freedesktop.login1", "/org/freedesktop/login1/session/auto",
+                      "org.freedesktop.login1.Session", "SetBrightness",
+                      GLib.Variant("(ssu)", ("backlight", device, raw)),
+                      None, Gio.DBusCallFlags.NONE, 2000, None)
+        return True
+    except GLib.Error:
+        pass
+    if have("brightnessctl"):
+        return subprocess.run(["brightnessctl", "-q", "-d", device, "set", str(raw)],
+                              check=False).returncode == 0
+    if have("xfpm-power-backlight-helper"):
+        return subprocess.run(["pkexec", "xfpm-power-backlight-helper", "--set-brightness",
+                               str(raw)], check=False).returncode == 0
+    return False
+
+
+def brightness_popup(plugin_id, device):
+    win = Popup("brightness", width=260)
+    base = "/sys/class/backlight/" + device
+    try:
+        maximum = int(read_file(base + "/max_brightness", "0"))
+        current = int(read_file(base + "/brightness", "0"))
+    except ValueError:
+        maximum = current = 0
+    if not device or maximum <= 0:
+        win.header("Brillo")
+        win.box.pack_start(win.dim_label("No hay control de retroiluminación."), False, False, 4)
+        win.popup()
+        return
+
+    conf = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                        "onyx-xfce", "onyx.conf")
+    minimum = 5
+    for line in read_file(conf).splitlines():
+        if line.startswith("ONYX_BRIGHTNESS_MIN="):
+            try:
+                minimum = int(line.split("=", 1)[1].split()[0].strip("\"'"))
+            except (ValueError, IndexError):
+                pass
+
+    value = Gtk.Label(label="")
+    value.get_style_context().add_class("onyx-dim")
+    win.header("Brillo", value)
+    scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, max(1, minimum), 100, 1)
+    scale.set_draw_value(False)
+    scale.set_value(round(current * 100 / maximum))
+    value.set_text("%d%%" % scale.get_value())
+    win.box.pack_start(scale, False, False, 6)
+    pending = {"id": 0}
+    failed = win.dim_label("No se pudo cambiar el brillo (ver README).")
+
+    def apply():
+        pending["id"] = 0
+        pct = int(scale.get_value())
+        if not set_backlight(device, max(1, round(pct * maximum / 100))):
+            failed.show()
+        return False
+
+    def changed(_s):
+        value.set_text("%d%%" % scale.get_value())
+        if not pending["id"]:
+            pending["id"] = GLib.timeout_add(60, apply)
+
+    scale.connect("value-changed", changed)
+    win.box.pack_start(failed, False, False, 0)
+    win.connect("destroy", lambda _w: refresh_genmon(plugin_id))
+    win.hidden.append(failed)
+    win.popup()
+
+
+# --------------------------------------------------------------------------
+def main(argv):
+    kind = argv[1] if len(argv) > 1 else ""
+    arg = argv[2] if len(argv) > 2 else ""
+    if kind not in ("calendar", "wifi", "bluetooth", "brightness"):
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    if not single_instance(kind):
+        return 0
+    provider = Gtk.CssProvider()
+    provider.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider,
+                                             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    if kind == "calendar":
+        calendar_popup()
+    elif kind == "wifi":
+        wifi_popup(arg)
+    elif kind == "bluetooth":
+        bluetooth_popup(arg)
+    else:
+        brightness_popup(arg, argv[3] if len(argv) > 3 else "")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

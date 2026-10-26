@@ -1,0 +1,53 @@
+#!/bin/bash
+# Onyx XFCE — internal temperature module for genmon.
+# Reads the kernel hwmon sensors directly (no lm-sensors daemon, no forks).
+# Preference for "auto": k10temp (CPU die) > acpitz (firmware zone) > amdgpu.
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+declare -A label=([k10temp]="CPU (k10temp)" [amdgpu]="GPU Radeon (amdgpu)"
+                  [acpitz]="ACPI (acpitz)" [coretemp]="CPU (coretemp)")
+chosen="" chosen_name="" tip=""
+
+for dir in /sys/class/hwmon/hwmon*; do
+    read -r name 2>/dev/null <"$dir/name" || continue
+    for input in "$dir"/temp*_input; do
+        [[ -r $input ]] || continue
+        read -r milli 2>/dev/null <"$input" || continue
+        ((milli > 0)) || continue
+        what=${label[$name]:-$name}
+        if [[ -r ${input%_input}_label ]]; then
+            read -r sub <"${input%_input}_label"
+            what+=" $sub"
+        fi
+        tip+=$'\n'"$what: $(((milli + 500) / 1000))°C"
+        case $ONYX_TEMP_SENSOR in
+            /*) [[ $input == "$ONYX_TEMP_SENSOR" ]] && chosen=$milli chosen_name=$what ;;
+            k10temp | amdgpu | acpitz | coretemp)
+                [[ $name == "$ONYX_TEMP_SENSOR" && -z $chosen ]] && chosen=$milli chosen_name=$what ;;
+            *)  # auto: keep the best-ranked sensor seen so far
+                rank=9
+                case $name in k10temp | coretemp) rank=1 ;; acpitz) rank=2 ;; amdgpu) rank=3 ;; esac
+                if ((rank < ${best_rank:-10})); then
+                    best_rank=$rank chosen=$milli chosen_name=$what
+                fi ;;
+        esac
+    done
+done
+
+# No readable sensor: show nothing rather than a fake value.
+if [[ -z $chosen ]]; then
+    onyx_hide
+    exit 0
+fi
+
+t=$(((chosen + 500) / 1000))
+text="${t}°C"
+if ((t >= ${ONYX_TEMP_CRIT:-80})); then
+    text="<span background='$ONYX_ACTIVE' foreground='$ONYX_MODULE' weight='bold'> $text </span>"
+elif ((t >= ${ONYX_TEMP_WARN:-70})); then
+    text="<span foreground='$ONYX_ACTIVE' weight='bold'>$text</span>"
+fi
+
+printf '<icon>onyx-temp-symbolic</icon><txt>%s</txt><tool>Sensor mostrado: %s%s</tool>' \
+    "$text" "$chosen_name" "$tip"

@@ -1,0 +1,173 @@
+/* Onyx XFCE — panel styling.
+ * Loaded from ~/.config/gtk-3.0/gtk.css with @import; every rule is scoped to
+ * the XFCE panel (.xfce4-panel) or to Onyx plugin ids, so other GTK apps are
+ * not affected. Plugin ids (#genmon-7, #pager-1, ...) match install.sh.
+ */
+@define-color onyx_bar     #252525;
+@define-color onyx_module  #101010;
+@define-color onyx_text    #eeeeee;
+@define-color onyx_dim     #8c8c8c;
+@define-color onyx_active  #f0f0f0;
+
+/* ---- base --------------------------------------------------------------- */
+.xfce4-panel {
+    -gtk-icon-theme: "Onyx";   /* monochrome icons, only inside the panel */
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 9pt;
+    color: @onyx_text;
+    text-shadow: none;
+    -gtk-icon-shadow: none;
+}
+.xfce4-panel.background,
+.xfce4-panel.background.marching-ants {
+    background-color: @onyx_bar;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+.xfce4-panel label {
+    color: @onyx_text;
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 9pt;
+}
+.xfce4-panel button {
+    min-height: 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0 6px;
+    border: none;
+    border-radius: 3px;
+    background: none;
+    box-shadow: none;
+    outline: none;
+    text-shadow: none;
+    -gtk-icon-shadow: none;
+    color: @onyx_text;
+    transition: none;
+}
+.xfce4-panel button:hover,
+.xfce4-panel button:checked,
+.xfce4-panel button:active {
+    background: none;
+    box-shadow: none;
+    border: none;
+}
+
+/* ---- genmon modules ------------------------------------------------------
+ * A module is the visible children of .genmon_imagebox (icon + value). The
+ * pill is painted on those children, so a hidden module paints nothing.  */
+.xfce4-panel .genmon_imagebox > * {
+    background-color: @onyx_module;
+    margin: 4px 0;
+    padding: 0 3px;
+    border-radius: 0;
+}
+.xfce4-panel .genmon_imagebox > :first-child {
+    margin-left: 3px;
+    padding-left: 8px;
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+}
+.xfce4-panel .genmon_imagebox > :last-child {
+    margin-right: 3px;
+    padding-right: 8px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+.xfce4-panel .genmon_imagebutton,
+.xfce4-panel .genmon_valuebutton {
+    min-height: 0;
+}
+.xfce4-panel .genmon_imagebox > .genmon_imagebutton:hover,
+.xfce4-panel .genmon_imagebox > .genmon_valuebutton:hover {
+    background-color: @onyx_module;
+}
+.xfce4-panel .genmon_imagebutton:hover image,
+.xfce4-panel .genmon_valuebutton:hover label {
+    color: @onyx_active;
+}
+/* the "hidden" state: a progress bar collapsed to nothing */
+.xfce4-panel progressbar,
+.xfce4-panel progressbar trough,
+.xfce4-panel progressbar progress {
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+    opacity: 0;
+}
+
+/* ---- workspaces: three separate pills, the active one inverted --------- */
+#pager-1 button {
+    margin: 4px 2px;
+    padding: 0 9px;
+    background-color: @onyx_module;
+    border-radius: 3px;
+}
+#pager-1 button label {
+    color: @onyx_dim;
+    font-weight: bold;
+}
+#pager-1 button:hover label {
+    color: @onyx_text;
+}
+#pager-1 button:checked {
+    background-color: @onyx_active;
+}
+#pager-1 button:checked label {
+    color: @onyx_module;
+}
+#pager-1 { margin-left: 4px; }
+
+/* ---- Brave Origin launcher and tray ------------------------------------ */
+#launcher-2 button {
+    margin: 4px 3px;
+    padding: 0 6px;
+    background-color: @onyx_module;
+}
+#launcher-2 button:hover {
+    background-color: @onyx_module;
+}
+#systray-3 {
+    margin: 4px 3px;
+}
+/* the chevron that reveals hidden tray icons (e.g. nm-applet, blueman) */
+#systray-3 button {
+    margin: 0;
+    padding: 0 2px;
+    color: @onyx_dim;
+}
+#systray-3 button:hover {
+    color: @onyx_text;
+}
+
+/* ---- native plugins on the right: same pill as genmon ------------------- */
+#pulseaudio-15 button,
+#xkb-17 button,
+#actions-18 #actions-button {
+    margin: 4px 3px;
+    padding: 0 8px;
+    background-color: @onyx_module;
+}
+#pulseaudio-15 button:hover image,
+#actions-18 #actions-button:hover {
+    color: @onyx_active;
+}
+#xkb-17 button {
+    min-width: 22px;
+}
+#xkb-17 label {
+    font-weight: bold;
+}
+/* power button: icon drawn by CSS, the plugin label is empty */
+#actions-18 #actions-button {
+    min-width: 16px;
+    background-image: -gtk-icontheme("onyx-power-symbolic");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 16px 16px;
+}
+#actions-18 { margin-right: 3px; }

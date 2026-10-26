@@ -1,0 +1,41 @@
+#!/bin/bash
+# Onyx XFCE — Bluetooth module for genmon.
+# Hidden when the machine has no Bluetooth adapter. Power state is the rfkill
+# switch; active links appear as hciX:N entries in sysfs. Click: popup.
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+id=$1
+present=0 on=0
+for r in /sys/class/rfkill/rfkill*; do
+    read -r type 2>/dev/null <"$r/type"
+    [[ $type == bluetooth ]] || continue
+    present=1
+    read -r soft <"$r/soft"
+    read -r hard <"$r/hard"
+    ((soft || hard)) || on=1
+done
+for hci in /sys/class/bluetooth/hci*; do
+    [[ -e $hci ]] && present=1
+done
+
+if ((!present)); then
+    onyx_hide
+    exit 0
+fi
+
+links=0
+for c in /sys/class/bluetooth/hci*:*; do
+    [[ -e $c ]] && links=$((links + 1))
+done
+
+if ((!on)); then
+    icon=onyx-bluetooth-off tip="Bluetooth desactivado"
+elif ((links)); then
+    icon=onyx-bluetooth-connected tip="Bluetooth: $links conexión(es) activa(s)"
+else
+    icon=onyx-bluetooth tip="Bluetooth activado"
+fi
+
+printf '<icon>%s-symbolic</icon><iconclick>%s</iconclick><tool>%s\nClic: activar / dispositivos</tool>' \
+    "$icon" "$ONYX_BIN/onyx-popup bluetooth $id" "$tip"

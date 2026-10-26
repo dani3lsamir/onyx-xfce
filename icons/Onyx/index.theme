@@ -1,0 +1,13 @@
+[Icon Theme]
+Name=Onyx
+Comment=Monochrome panel icons for Onyx XFCE (used only inside the panel)
+Inherits=hicolor
+Hidden=true
+Directories=scalable/status
+
+[scalable/status]
+Size=16
+MinSize=8
+MaxSize=512
+Type=Scalable
+Context=Status

@@ -1,0 +1,27 @@
+#!/bin/bash
+# Onyx XFCE — CPU usage module for genmon.
+# Usage is the busy share of /proc/stat jiffies since the previous refresh;
+# the previous sample is kept in tmpfs. No sleeping, no external commands.
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+read -r _ user nice sys idle iowait irq softirq steal _ </proc/stat
+total=$((user + nice + sys + idle + iowait + irq + softirq + steal))
+idle=$((idle + iowait))
+
+state="$ONYX_RUN/cpu"
+if read -r prev_total prev_idle 2>/dev/null <"$state" && ((total > prev_total)); then
+    dt=$((total - prev_total))
+    di=$((idle - prev_idle))
+    since="desde la última lectura"
+else
+    dt=$total
+    di=$idle
+    since="promedio desde el arranque"
+fi
+printf '%s %s\n' "$total" "$idle" >"$state"
+pct=$(((100 * (dt - di) + dt / 2) / dt))
+
+read -r l1 l5 l15 _ </proc/loadavg
+printf '<icon>onyx-cpu-symbolic</icon><txt>%d%%</txt><tool>CPU %d%% (%s)\nCarga: %s  %s  %s</tool>' \
+    "$pct" "$pct" "$since" "$l1" "$l5" "$l15"

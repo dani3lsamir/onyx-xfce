@@ -1,0 +1,77 @@
+#!/bin/bash
+# Onyx XFCE — single "now playing" module for genmon (MPRIS via playerctl).
+#
+#   onyx-music <plugin-id>          print the module (called by genmon)
+#   onyx-music <plugin-id> toggle   play/pause the active player
+#   onyx-music <plugin-id> watch    event listener (started automatically)
+#
+# Instead of polling D-Bus every few seconds, one `playerctl --follow` process
+# blocks until a player changes, stores the state in tmpfs and asks the panel
+# to refresh this plugin. With no player running the module is hidden.
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+id=$1
+state="$ONYX_RUN/music"
+lock="$ONYX_RUN/music.lock"
+ignore=()
+[[ -n $ONYX_MUSIC_IGNORE ]] && ignore=(--ignore-player="$ONYX_MUSIC_IGNORE")
+
+case $2 in
+    toggle)
+        exec playerctl "${ignore[@]}" play-pause
+        ;;
+    watch)
+        exec 9>"$lock"
+        flock -n 9 || exit 0 # another watcher already runs
+        # Right after the panel starts, a refresh can arrive before the plugin
+        # is embedded and the panel then keeps the module at its hidden size.
+        sleep 3
+        # Quit once this plugin is no longer on the panel (restore, new layout).
+        rc="${XDG_CONFIG_HOME:-$HOME/.config}/xfce4/panel/genmon-$id.rc"
+        grep -qs "onyx-music $id" "$rc" || exit 0
+        last=""
+        while IFS= read -r line; do
+            grep -qs "onyx-music $id" "$rc" || break
+            [[ $line == "$last" ]] && continue
+            last=$line
+            printf '%s\n' "$line" >"$state"
+            onyx_refresh "$id"
+        done < <(exec playerctl "${ignore[@]}" --follow metadata \
+            --format $'{{status}}\t{{playerName}}\t{{artist}}\t{{title}}' 2>/dev/null)
+        kill "$!" 2>/dev/null # the playerctl above, if the loop was left early
+        : >"$state"
+        exit 0
+        ;;
+esac
+
+# Start the listener when it is not running (first refresh after login or
+# install). Ask playerctl once right now, so the very first output is already
+# right: growing a module while the panel is still embedding it can leave it
+# stuck at its hidden size.
+if { flock -n 8; } 8>"$lock" 2>/dev/null; then
+    timeout 2 playerctl "${ignore[@]}" metadata \
+        --format $'{{status}}\t{{playerName}}\t{{artist}}\t{{title}}' >"$state" 2>/dev/null
+    onyx_detach "$0" "$id" watch
+fi
+
+IFS=$'\t' read -r status player artist title 2>/dev/null <"$state"
+if [[ $status != Playing && $status != Paused ]]; then
+    onyx_hide
+    exit 0
+fi
+
+name=${title:-$player}
+max=${ONYX_MUSIC_MAX:-28}
+((${#name} > max)) && name="${name:0:max-1}…"
+# Pause sign while playing, play sign while paused: the module is the button.
+[[ $status == Playing ]] && action='❚❚' || action='▶'
+
+cmd="$0 $id toggle"
+tip="$(onyx_esc "${title:-?}")"
+[[ -n $artist ]] && tip+=$'\n'"$(onyx_esc "$artist")"
+tip+=$'\n'"$player · $status — clic: reproducir/pausar"
+
+printf '<icon>onyx-music-symbolic</icon><iconclick>%s</iconclick>' "$cmd"
+printf '<txt>%s  <span size="smaller">%s</span></txt><txtclick>%s</txtclick><tool>%s</tool>' \
+    "$(onyx_esc "$name")" "$action" "$cmd" "$tip"

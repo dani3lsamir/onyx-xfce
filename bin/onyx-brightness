@@ -1,0 +1,40 @@
+#!/bin/bash
+# Onyx XFCE — backlight module for genmon.
+#   onyx-brightness <plugin-id>          print the module
+#   onyx-brightness <plugin-id> device   print the backlight device in use
+# Hidden when there is no backlight device (e.g. an external monitor only).
+# shellcheck source=bin/onyx-common.sh
+. "${0%/*}/onyx-common.sh"
+
+id=$1
+dev=""
+if [[ ${ONYX_BACKLIGHT:-auto} != auto && -d /sys/class/backlight/$ONYX_BACKLIGHT ]]; then
+    dev=/sys/class/backlight/$ONYX_BACKLIGHT
+else
+    # Same preference order as other desktops: firmware > platform > raw.
+    best=9
+    for d in /sys/class/backlight/*; do
+        read -r type 2>/dev/null <"$d/type" || continue
+        case $type in firmware) rank=1 ;; platform) rank=2 ;; *) rank=3 ;; esac
+        ((rank < best)) && best=$rank dev=$d
+    done
+fi
+
+if [[ $2 == device ]]; then
+    printf '%s\n' "${dev##*/}"
+    exit 0
+fi
+if [[ -z $dev ]]; then
+    onyx_hide
+    exit 0
+fi
+
+read -r cur <"$dev/brightness"
+read -r max <"$dev/max_brightness"
+((max > 0)) || max=1
+pct=$(((cur * 100 + max / 2) / max))
+
+click="$ONYX_BIN/onyx-popup brightness $id ${dev##*/}"
+printf '<icon>onyx-brightness-symbolic</icon><iconclick>%s</iconclick><txt>%d%%</txt><txtclick>%s</txtclick>' \
+    "$click" "$pct" "$click"
+printf '<tool>Brillo %d%% (%s)\nClic: ajustar</tool>' "$pct" "${dev##*/}"
